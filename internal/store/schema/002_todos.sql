@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS todos (
+    session_id TEXT NOT NULL PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    todos_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);

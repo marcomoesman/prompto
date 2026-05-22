@@ -1,0 +1,80 @@
+{
+  "providers": {
+    "llamacpp": {
+      "kind": "openai",
+      "base_url": "http://localhost:8000",
+      "api_key": "llamacpp",
+      "local_provider": true,
+      "max_parallel": 1,
+      "models": [
+        {
+          "name": "qwen-36-27b",
+          "max_tokens": 8192,
+          "temperature": 0.8,
+          "presence_penalty": 1
+        }
+      ]
+    },
+    "lmstudio": {
+      "kind": "openai",
+      "base_url": "http://localhost:1234",
+      "api_key": "lm-studio",
+      "local_provider": true,
+      "max_parallel": 1,
+      "models": [
+        {
+          "name": "qwen3-coder-30b",
+          "max_tokens": 16384,
+          "temperature": 0.7
+        }
+      ]
+    },
+    "openrouter": {
+      "kind": "openai",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "$OPENROUTER_API_KEY",
+      "models": [
+        { "name": "moonshotai/kimi-k2.6", "max_tokens": 8192 },
+        { "name": "z-ai/glm-5.1", "max_tokens": 8192 },
+        { "name": "deepseek/deepseek-v4-flash", "max_tokens": 8192 }
+      ]
+    }
+  },
+
+  "default": {
+    "provider": "llamacpp",
+    "model": "qwen-36-27b"
+  },
+
+  "rules": {
+    "files": ["AGENTS.md", "CLAUDE.md"],
+    "respect_robots_txt": false
+  },
+
+  "context": {
+    "default_limit": 200000,
+    "max_override": 400000
+  },
+
+  "compact": {
+    "model": "qwen-36-27b",
+    "threshold_pct": 80,
+    "keep_recent_messages": 8
+  },
+
+  "agent": {
+    "max_steps": 100
+  },
+
+  "model_guidance": {
+    "tool_call_recovery": "auto",
+    "workspace_hints": "on",
+    "loop_guards": "on",
+    "compact_tool_schemas": "auto"
+  },
+
+  "search": {
+    "provider": "searxng",
+    "base_url": "http://localhost:8080"
+  }
+}
