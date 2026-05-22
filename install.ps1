@@ -61,18 +61,42 @@ $BinPath = Join-Path $Prefix 'prompto.exe'
 
 function Info($msg)  { Write-Host $msg }
 function Warn($msg)  { Write-Warning $msg }
-function Fail($msg)  { Write-Error $msg; exit 1 }
+function Fail($msg) {
+    # Write directly to the error stream and exit; avoid Write-Error,
+    # which under $ErrorActionPreference='Stop' produces an ugly
+    # positional banner before exit takes effect.
+    [Console]::Error.WriteLine("error: $msg")
+    exit 1
+}
 
 function ConvertTo-ConfigJson($config) {
     return ($config | ConvertTo-Json -Depth 10)
 }
 
 function Get-Arch {
-    switch ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture) {
-        'X64'   { 'amd64' }
-        'Arm64' { 'arm64' }
-        default { Fail "unsupported architecture: $_" }
+    # Prefer Windows-native env vars: always defined on Windows and not
+    # subject to .NET Framework version quirks in Windows PowerShell 5.1.
+    # PROCESSOR_ARCHITEW6432 is set when running 32-bit on 64-bit Windows.
+    $archEnv = $env:PROCESSOR_ARCHITEW6432
+    if ([string]::IsNullOrEmpty($archEnv)) { $archEnv = $env:PROCESSOR_ARCHITECTURE }
+
+    switch -Regex ($archEnv) {
+        '^(AMD64|X64)$' { return 'amd64' }
+        '^ARM64$'       { return 'arm64' }
+        '^(X86|X32)$'   { Fail "32-bit x86 is not supported (only windows/amd64 is published)" }
     }
+
+    # Fallback to .NET API.
+    $archDotNet = $null
+    try {
+        $archDotNet = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+    } catch {}
+    switch -Regex ($archDotNet) {
+        '^X64$'   { return 'amd64' }
+        '^Arm64$' { return 'arm64' }
+    }
+
+    Fail "unsupported architecture (env='$archEnv', .NET='$archDotNet')"
 }
 
 function Resolve-LatestTag {
@@ -190,9 +214,14 @@ function Invoke-Uninstall {
         Info "No prompto binary at $BinPath."
     }
     if (Test-Path -LiteralPath $Prefix) {
-        # Remove the install dir if empty.
-        if (-not (Get-ChildItem -LiteralPath $Prefix -Force | Select-Object -First 1)) {
-            Remove-Item -LiteralPath $Prefix -Force
+        # Remove the install dir only if it's truly empty.
+        try {
+            $remaining = @(Get-ChildItem -LiteralPath $Prefix -Force -ErrorAction Stop)
+            if ($remaining.Count -eq 0) {
+                Remove-Item -LiteralPath $Prefix -Force
+            }
+        } catch {
+            # Permission denied or similar — leave the dir alone.
         }
     }
     if (-not $NoPath) { Remove-FromUserPath $Prefix }
@@ -252,7 +281,9 @@ $archiveName = "prompto_${semver}_windows_amd64.zip"
 $archiveUrl  = "https://github.com/$Repo/releases/download/$tag/$archiveName"
 $sumsUrl     = "https://github.com/$Repo/releases/download/$tag/checksums.txt"
 
-$tmp = Join-Path $env:TEMP ("prompto-install-" + [Guid]::NewGuid().ToString('N'))
+$tempRoot = $env:TEMP
+if ([string]::IsNullOrEmpty($tempRoot)) { $tempRoot = [System.IO.Path]::GetTempPath() }
+$tmp = Join-Path $tempRoot ("prompto-install-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {
@@ -265,18 +296,13 @@ try {
     Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsPath -UseBasicParsing
 
     $expected = $null
+    $escapedName = [regex]::Escape($archiveName)
     foreach ($line in Get-Content -LiteralPath $sumsPath) {
         # Format: "<sha256>  <filename>"
-        if ($line -match "^([0-9a-fA-F]{64})\s+\Q$archiveName\E$" -or
-            $line -match "^([0-9a-fA-F]{64})\s+$([regex]::Escape($archiveName))$") {
+        if ($line -match "^([0-9a-fA-F]{64})\s+$escapedName$") {
             $expected = $Matches[1].ToLower()
             break
         }
-    }
-    if (-not $expected) {
-        # Fallback: looser match if the strict regex missed it.
-        $row = Get-Content -LiteralPath $sumsPath | Where-Object { $_ -like "*$archiveName" } | Select-Object -First 1
-        if ($row) { $expected = ($row -split '\s+')[0].ToLower() }
     }
     if (-not $expected) { Fail "no entry for $archiveName in checksums.txt" }
 
@@ -321,7 +347,10 @@ function Write-Config([string]$json) {
     if (-not (Test-Path -LiteralPath $cfgDir)) {
         New-Item -ItemType Directory -Path $cfgDir -Force | Out-Null
     }
-    Set-Content -LiteralPath $cfgFile -Value $json -Encoding UTF8
+    # Set-Content -Encoding UTF8 writes a BOM on Windows PowerShell 5.1;
+    # Go's json.Unmarshal rejects a BOM-prefixed document. Use the .NET
+    # API with an explicit no-BOM UTF8Encoding so both 5.1 and 7+ agree.
+    [System.IO.File]::WriteAllText($cfgFile, $json, [System.Text.UTF8Encoding]::new($false))
     Info "Wrote $cfgFile."
 }
 

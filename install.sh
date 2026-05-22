@@ -147,8 +147,10 @@ installed_version() {
     [ -x "$bin" ] || { echo ""; return; }
     local out
     out="$("$bin" --version 2>/dev/null || true)"
-    # Expected format: "prompto v0.1.0"
-    echo "$out" | awk '{print $2}' | sed 's/^v//'
+    # Expected format: "prompto v0.1.0". Anchor to the first line so a
+    # noisy binary (e.g. with deprecation warnings) doesn't return a
+    # multi-line string that breaks the equality check downstream.
+    printf '%s' "$out" | awk 'NR==1 { print $2; exit }' | sed 's/^v//'
 }
 
 json_escape() {
@@ -283,7 +285,7 @@ info "Downloading checksums.txt..."
 curl -fsSL -o "$TMP/checksums.txt" "$SUMS_URL" \
     || err "failed to download $SUMS_URL"
 
-EXPECTED="$(grep "  $ARCHIVE_NAME\$" "$TMP/checksums.txt" | awk '{print $1}')"
+EXPECTED="$(awk -v name="$ARCHIVE_NAME" '$2 == name { print $1; exit }' "$TMP/checksums.txt")"
 [ -n "$EXPECTED" ] || err "no entry for $ARCHIVE_NAME in checksums.txt"
 
 ACTUAL="$(cd "$TMP" && $SHA_CMD "$ARCHIVE_NAME" | awk '{print $1}')"
@@ -320,7 +322,14 @@ run_config_wizard() {
         info "Existing config found at $CFG_FILE; leaving it untouched."
         return
     fi
-    if [ $ASSUME_YES -eq 1 ] || [ ! -t 0 ] && [ ! -r /dev/tty ]; then
+    if [ $ASSUME_YES -eq 1 ]; then
+        info "Skipping interactive config wizard (--yes)."
+        info "Edit $CFG_FILE manually. See: https://github.com/$REPO/blob/main/docs/CONFIG.md"
+        return
+    fi
+    # `[ ! -t 0 ] && [ ! -r /dev/tty ]` together mean "no stdin tty and no
+    # controlling tty either" — i.e. there is no way to prompt the user.
+    if [ ! -t 0 ] && [ ! -r /dev/tty ]; then
         info "Skipping interactive config wizard (non-interactive shell)."
         info "Edit $CFG_FILE manually. See: https://github.com/$REPO/blob/main/docs/CONFIG.md"
         return
